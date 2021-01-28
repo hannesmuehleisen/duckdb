@@ -38,6 +38,8 @@ void TableDataReader::ReadTableData() {
 		for (idx_t data_ptr = 0; data_ptr < data_pointer_count; data_ptr++) {
 			// read the data pointer
 			DataPointer data_pointer;
+			data_pointer.block_type = reader.Read<BlockType>();
+			D_ASSERT(data_pointer.block_type != BlockType::INVALID);
 			data_pointer.row_start = reader.Read<idx_t>();
 			data_pointer.tuple_count = reader.Read<idx_t>();
 			data_pointer.block_id = reader.Read<block_id_t>();
@@ -48,7 +50,8 @@ void TableDataReader::ReadTableData() {
 			// create a persistent segment
 			auto segment = make_unique<PersistentSegment>(manager.buffer_manager, data_pointer.block_id,
 			                                              data_pointer.offset, column.type, data_pointer.row_start,
-			                                              data_pointer.tuple_count, move(data_pointer.statistics));
+			                                              data_pointer.tuple_count, move(data_pointer.statistics),
+			                                              data_pointer.block_type == BlockType::COMPRESSED);
 			info.data->table_data[col].push_back(move(segment));
 		}
 		if (col == 0) {

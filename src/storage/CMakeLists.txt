@@ -9,6 +9,8 @@ add_library_unity(
   buffer_manager.cpp
   checkpoint_manager.cpp
   column_data.cpp
+  compressed_segment.cpp
+  base_segment.cpp
   block.cpp
   data_table.cpp
   index.cpp

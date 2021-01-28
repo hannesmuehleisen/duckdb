@@ -9,6 +9,8 @@
 #pragma once
 
 #include "duckdb/storage/table/column_segment.hpp"
+#include "duckdb/storage/base_segment.hpp"
+
 #include "duckdb/storage/block.hpp"
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
@@ -23,23 +25,19 @@ struct ColumnAppendState;
 struct UpdateInfo;
 
 //! An uncompressed segment represents an uncompressed segment of a column residing in a block
-class UncompressedSegment {
+class UncompressedSegment : public BaseSegment {
 public:
 	UncompressedSegment(BufferManager &manager, PhysicalType type, idx_t row_start);
-	virtual ~UncompressedSegment();
 
 	//! The buffer manager
 	BufferManager &manager;
 	//! Type of the uncompressed segment
 	PhysicalType type;
-	//! The block that this segment relates to
-	shared_ptr<BlockHandle> block;
+
 	//! The size of a vector of this type
 	idx_t vector_size;
 	//! The maximum amount of vectors that can be stored in this segment
 	idx_t max_vector_count;
-	//! The current amount of tuples that are stored in this segment
-	idx_t tuple_count;
 	//! The starting row of this segment
 	idx_t row_start;
 	//! Version chains for each of the vectors
@@ -48,32 +46,22 @@ public:
 	StorageLock lock;
 
 public:
-	virtual void InitializeScan(ColumnScanState &state) {
-	}
 	//! Fetch the vector at index "vector_index" from the uncompressed segment, storing it in the result vector
 	void Scan(Transaction &transaction, ColumnScanState &state, idx_t vector_index, Vector &result,
-	          bool get_lock = true);
+	          bool get_lock = true) override;
 	//! Scan the next vector from the column and apply a selection vector to filter the data
 	void FilterScan(Transaction &transaction, ColumnScanState &state, Vector &result, SelectionVector &sel,
-	                idx_t &approved_tuple_count);
+	                idx_t &approved_tuple_count) override;
 	//! Fetch the vector at index "vector_index" from the uncompressed segment, throwing an exception if there are any
 	//! outstanding updates
-	void IndexScan(ColumnScanState &state, idx_t vector_index, Vector &result);
-	static void filterSelection(SelectionVector &sel, Vector &result, const TableFilter& filter, idx_t &approved_tuple_count,
-	                            nullmask_t &nullmask);
+	void IndexScan(ColumnScanState &state, idx_t vector_index, Vector &result) override;
+	static void filterSelection(SelectionVector &sel, Vector &result, const TableFilter &filter,
+	                            idx_t &approved_tuple_count, nullmask_t &nullmask);
 	//! Executes the filters directly in the table's data
 	void Select(Transaction &transaction, Vector &result, vector<TableFilter> &tableFilters, SelectionVector &sel,
-	            idx_t &approved_tuple_count, ColumnScanState &state);
+	            idx_t &approved_tuple_count, ColumnScanState &state) override;
 	//! Fetch a single vector from the base table
-	void Fetch(ColumnScanState &state, idx_t vector_index, Vector &result);
-	//! Fetch a single value and append it to the vector
-	virtual void FetchRow(ColumnFetchState &state, Transaction &transaction, row_t row_id, Vector &result,
-	                      idx_t result_idx) = 0;
-
-	//! Append a part of a vector to the uncompressed segment with the given append state, updating the provided stats
-	//! in the process. Returns the amount of tuples appended. If this is less than `count`, the uncompressed segment is
-	//! full.
-	virtual idx_t Append(SegmentStatistics &stats, Vector &data, idx_t offset, idx_t count) = 0;
+	void Fetch(ColumnScanState &state, idx_t vector_index, Vector &result) override;
 
 	//! Update a set of row identifiers to the specified set of updated values
 	void Update(ColumnData &data, SegmentStatistics &stats, Transaction &transaction, Vector &update, row_t *ids,

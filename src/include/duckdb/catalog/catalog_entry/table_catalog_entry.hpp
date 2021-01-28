@@ -17,7 +17,6 @@
 
 namespace duckdb {
 
-class ColumnStatistics;
 class DataTable;
 struct CreateTableInfo;
 struct BoundCreateTableInfo;

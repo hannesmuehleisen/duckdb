@@ -225,7 +225,7 @@ void CheckpointManager::WriteTable(ClientContext &context, TableCatalogEntry &ta
 	//! and the offset to where the info starts
 	metadata_writer->Write<uint64_t>(tabledata_writer->offset);
 	// now we need to write the table data
-	TableDataWriter writer(*this, table);
+	TableDataWriter writer(*this, table, true);
 	writer.WriteTableData(context);
 }
 

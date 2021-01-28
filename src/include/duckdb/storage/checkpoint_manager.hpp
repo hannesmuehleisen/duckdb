@@ -22,10 +22,12 @@ class SequenceCatalogEntry;
 class TableCatalogEntry;
 class ViewCatalogEntry;
 
+enum class BlockType : uint8_t { INVALID = 0, UNCOMPRESSED = 100, COMPRESSED = 200 };
+
 class DataPointer {
 public:
 	DataPointer(){};
-
+	BlockType block_type;
 	uint64_t row_start;
 	uint64_t tuple_count;
 	block_id_t block_id;

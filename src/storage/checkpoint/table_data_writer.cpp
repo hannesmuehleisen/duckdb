@@ -7,6 +7,8 @@
 #include "duckdb/common/serializer/buffered_serializer.hpp"
 
 #include "duckdb/storage/numeric_segment.hpp"
+#include "duckdb/storage/compressed_segment.hpp"
+
 #include "duckdb/storage/string_segment.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 #include "duckdb/transaction/transaction.hpp"
@@ -37,8 +39,8 @@ private:
 	void AllocateNewBlock(block_id_t new_block_id);
 };
 
-TableDataWriter::TableDataWriter(CheckpointManager &manager, TableCatalogEntry &table)
-    : manager(manager), table(table) {
+TableDataWriter::TableDataWriter(CheckpointManager &manager, TableCatalogEntry &table, bool compress_p)
+    : manager(manager), table(table), compress(compress_p) {
 }
 
 TableDataWriter::~TableDataWriter() {
@@ -95,6 +97,12 @@ void TableDataWriter::WriteTableData(ClientContext &context) {
 
 void TableDataWriter::CreateSegment(idx_t col_idx) {
 	auto type_id = table.columns[col_idx].type.InternalType();
+	if (compress && type_id != PhysicalType::VARCHAR) {
+		// FIXME also support strings ay
+		segments[col_idx] = make_unique<NumericCompressedSegment>(manager.buffer_manager, type_id, 0);
+		return;
+	}
+
 	if (type_id == PhysicalType::VARCHAR) {
 		auto string_segment = make_unique<StringSegment>(manager.buffer_manager, 0);
 		string_segment->overflow_writer = make_unique<WriteOverflowStringsToDisk>(manager);
@@ -128,6 +136,8 @@ void TableDataWriter::FlushSegment(Transaction &transaction, idx_t col_idx) {
 		return;
 	}
 
+	segments[col_idx]->Flush();
+
 	// get the buffer of the segment and pin it
 	auto handle = manager.buffer_manager.Pin(segments[col_idx]->block);
 
@@ -136,6 +146,7 @@ void TableDataWriter::FlushSegment(Transaction &transaction, idx_t col_idx) {
 
 	// construct the data pointer
 	DataPointer data_pointer;
+	data_pointer.block_type = compress ? BlockType::COMPRESSED : BlockType::UNCOMPRESSED;
 	data_pointer.block_id = block_id;
 	data_pointer.offset = 0;
 	data_pointer.row_start = 0;
@@ -192,6 +203,7 @@ void TableDataWriter::WriteDataPointers() {
 		// then write the data pointers themselves
 		for (idx_t k = 0; k < data_pointer_list.size(); k++) {
 			auto &data_pointer = data_pointer_list[k];
+			manager.tabledata_writer->Write<BlockType>(data_pointer.block_type);
 			manager.tabledata_writer->Write<idx_t>(data_pointer.row_start);
 			manager.tabledata_writer->Write<idx_t>(data_pointer.tuple_count);
 			manager.tabledata_writer->Write<block_id_t>(data_pointer.block_id);

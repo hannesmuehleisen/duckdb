@@ -20,10 +20,12 @@ TransientSegment::TransientSegment(BufferManager &manager, LogicalType type, idx
 
 TransientSegment::TransientSegment(PersistentSegment &segment)
     : ColumnSegment(segment.type, ColumnSegmentType::TRANSIENT, segment.start), manager(segment.manager) {
-	if (segment.block_id == segment.data->block->BlockId()) {
-		segment.data->ToTemporary();
-	}
-	data = move(segment.data);
+	// FIXME
+	D_ASSERT(0);
+	//	if (segment.block_id == segment.data->block->BlockId()) {
+	//		segment.data->ToTemporary();
+	//	}
+	//	data = move(segment.data);
 	stats = move(segment.stats);
 	count = segment.count;
 	D_ASSERT(!segment.next);

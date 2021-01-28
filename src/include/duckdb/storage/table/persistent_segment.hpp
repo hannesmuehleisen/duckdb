@@ -18,7 +18,7 @@ namespace duckdb {
 class PersistentSegment : public ColumnSegment {
 public:
 	PersistentSegment(BufferManager &manager, block_id_t id, idx_t offset, LogicalType type, idx_t start, idx_t count,
-	                  unique_ptr<BaseStatistics> statistics);
+	                  unique_ptr<BaseStatistics> statistics, bool compress = false);
 
 	//! The buffer manager
 	BufferManager &manager;
@@ -27,7 +27,7 @@ public:
 	//! The offset into the block
 	idx_t offset;
 	//! The uncompressed segment that the data of the persistent segment is loaded into
-	unique_ptr<UncompressedSegment> data;
+	unique_ptr<BaseSegment> data;
 
 public:
 	void InitializeScan(ColumnScanState &state) override;
