@@ -57,7 +57,6 @@ void TableDataWriter::WriteTableData() {
 		auto type_id = table.columns[i].type.InternalType();
 		stats.push_back(make_unique<SegmentStatistics>(table.columns[i].type, GetTypeIdSize(type_id)));
 		column_stats.push_back(BaseStatistics::CreateEmpty(table.columns[i].type));
-		CreateSegment(i);
 	}
 
 	// now start scanning the table and append the data to the uncompressed segments
@@ -85,15 +84,19 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 	if (!col_data.data.root_node) {
 		return;
 	}
-	Vector intermediate(col_data.type);
 
 	// scan the segments of the column data
 	// we create a new segment tree with all the new segments
 	SegmentTree new_tree;
 
 	auto owned_segment = move(col_data.data.root_node);
+
+	vector<ColumnSegment*> scan_segments;
+	scan_segments.reserve(10);
+
 	auto segment = (ColumnSegment *)owned_segment.get();
 	while (segment) {
+		// leave segment alone case
 		if (segment->segment_type == ColumnSegmentType::PERSISTENT) {
 			auto &persistent = (PersistentSegment &)*segment;
 			// persistent segment; check if there were changes made to the segment
@@ -101,10 +104,11 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 				// unchanged persistent segment: no need to write the data
 
 				// flush any segments preceding this persistent segment
-				if (segments[col_idx]->tuple_count > 0) {
+                FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
+				/*if (segments[col_idx]->tuple_count > 0) {
 					FlushSegment(new_tree, col_idx);
 					CreateSegment(col_idx);
-				}
+				}*/
 
 				// set up the data pointer directly using the data from the persistent segment
 				DataPointer pointer;
@@ -129,22 +133,249 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 			}
 		}
 		// not persisted yet: scan the segment and write it to disk
+        scan_segments.push_back(segment);
+        if (scan_segments.size() > 10) {
+            FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
+		}
+        // move to the next segment in the list
+		owned_segment = move(segment->next);
+		segment = (ColumnSegment *)owned_segment.get();
+	}
+	// flush the final segments
+    FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
+	// replace the old tree with the new one
+	col_data.data.Replace(new_tree);
+}
+
+
+struct AnalyzeState {
+    virtual ~AnalyzeState(){}
+};
+
+struct RLEAnalyzeState : public AnalyzeState {
+    RLEState() : seen_count(0), rle_count(0), last_seen_count(0) {
+	}
+
+	idx_t seen_count;
+	idx_t rle_count;
+	idx_t last_seen_count;
+	Value last_value;
+};
+
+struct CompressionState {
+    virtual ~CompressionState(){}
+};
+
+struct RLECompressionState : public CompressionState {
+    RLECompressionState() : seen_value(false), last_seen_count(0) {
+    }
+
+	bool seen_value;
+    idx_t last_seen_count;
+    Value last_value;
+};
+
+// expression rewriter on complex filter pushdown
+// 42 + X >= 43
+
+
+// separate tasks (in arbitrary order)
+
+// task 1
+// handling half-empty blocks (half-empty blocks in free list, etc)
+
+// task 2
+// handling null values as separate boolean column
+
+// task 3
+// move updates from in-place to out of place somehow
+
+// task 4?
+// scan handles not vector aligned blocks on disk
+
+// end to end compression with rle or something
+// handling strings that are bigger than a block
+// expression rewrite thing
+
+
+struct RLECompression {
+    unique_ptr<AnalyzeState> InitializeRLE(ColumnData &col_data) {
+		return make_unique<RLEAnalyzeState>();
+	}
+
+	bool RLEAnalyze(Vector &input, idx_t count, AnalyzeState &state_p) {
+		auto &state = (RLEAnalyzeState &) state_p;
+		idx_t i;
+		if (state.seen_count == 0) {
+			state.seen_count = 1;
+			state.rle_count = 1;
+			state.last_seen_count = 1;
+			state.last_value = input.GetValue(0);
+			i = 1;
+		}
+		for(; i < count; i++) {
+			auto new_value = input.GetValue(i);
+			if (state.last_value != new_value || state.last_seen_count >= NumericLimits<uint16_t>::Maximum()) {
+				state.rle_count++;
+				state.last_seen_count = 1;
+				state.last_value = new_value;
+			} else {
+				state.last_seen_count++;
+			}
+		}
+		state.seen_count += count;
+		// abort if RLE is probably not going to work out
+		if (state.seen_count > 10000 && state.rle_count > 0.6 * state.seen_count) {
+			return false;
+		}
+		return true;
+	}
+
+	idx_t RLEFinalize(ColumnData &col_data, CompressionState &state_p) {
+        auto &state = (RLEAnalyzeState &) state_p;
+		return (GetTypeIdSize(col_data.type.InternalType()) + sizeof(uint16_t)) * state.rle_count;
+    }
+
+	unique_ptr<CompressionState> InitializeRLECompression(ColumnData &col_data, AnalyzeState &state_p) {
+        return make_unique<RLECompressionState>();
+	}
+    //idx_t compress_count = best_compression_method->compress_data(*block, data_written, intermediate, *compression_state);
+
+    idx_t RLECompress(Block &block, idx_t &offset_in_block, Vector &input, idx_t count, CompressionState &state_p) {
+		auto &state = (RLECompressionState &) state_p;
+
+		idx_t i = 0;
+        if (!state.seen_value) {
+            state.last_seen_count = 1;
+            state.last_value = input.GetValue(0);
+            i = 1;
+        }
+		idx_t RLE_SIZE = sizeof(uint16_t) + sizeof(int32_t);
+		auto write_pointer = block.buffer;
+        for(; i < count; i++) {
+            auto new_value = input.GetValue(i);
+            if (state.last_value != new_value || state.last_seen_count >= NumericLimits<uint16_t>::Maximum()) {
+                // write the value
+                Store<uint16_t>(state.last_seen_count, write_pointer + offset_in_block);
+                offset_in_block += sizeof(uint16_t);
+                Store<int32_t>(state.last_value.GetValue<int32_t>(), write_pointer + offset_in_block);
+                offset_in_block += sizeof(int32_t);
+
+                // reset
+                state.last_seen_count = 1;
+                state.last_value = new_value;
+
+				// check if we have space for the last value or not
+				// if not, abort
+				if (offset_in_block + RLE_SIZE > block.size) {
+					return i - 1;
+				}
+            } else {
+                state.last_seen_count++;
+            }
+        }
+		return count;
+    }
+};
+
+void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tree, idx_t col_idx, vector<ColumnSegment*>& segment_list) {
+	if (segment_list.size() == 0) {
+		return;
+	}
+
+    Vector intermediate(col_data.type);
+
+	// set up candidate compression methods
+	vector<unique_ptr<CompressionMethod>> candidates;
+	vector<unique_ptr<CompressionMethodState>> candidate_states;
+    candidate_states.reserve(candidates.size());
+	for(auto &compression_method : candidates) {
+		candidate_states.push_back(compression_method->initialize_state(col_data));
+	}
+
+	// call analyze on all of the compression methods
+    for(auto &segment : segment_list) {
+        ColumnScanState state;
+        segment->InitializeScan(state);
+        for (idx_t vector_index = 0; vector_index * STANDARD_VECTOR_SIZE < segment->count; vector_index++) {
+            idx_t count = MinValue<idx_t>(segment->count - vector_index * STANDARD_VECTOR_SIZE, STANDARD_VECTOR_SIZE);
+            segment->ScanCommitted(state, vector_index, intermediate);
+			for(idx_t i = 0; i < candidates.size(); i++) {
+				auto &compression_method = candidates[i];
+				auto &compression_state = candidate_states[i];
+				if (!compression_method) {
+					continue;
+				}
+			    //
+                bool keep_candidate = compression_method->analyze(intermediate, count, *compression_state);
+				if (!keep_candidate) {
+					compression_method.reset();
+                    compression_state.reset();
+				}
+			}
+        }
+	}
+
+	idx_t best_compression = INVALID_INDEX;
+	idx_t smallest_size = NumericLimits<idx_t>::Maximum();
+    for(idx_t i = 0; i < candidates.size(); i++) {
+		auto &compression_method = candidates[i];
+		auto &compression_state = candidate_states[i];
+		if (!compression_method) {
+			continue;
+		}
+		idx_t result_size = compression_method->final_analyze(col_data, *compression_state);
+		if (result_size < smallest_size) {
+			smallest_size = result_size;
+            best_compression = i;
+		}
+	}
+
+	auto &buffer_manager = BufferManager::GetBufferManager(db);
+	auto block = buffer_manager.Allocate(Storage::BLOCK_ALLOC_SIZE);
+	idx_t data_written = 0;
+
+	// SSSSSDDDDD
+	//
+
+	auto &best_compression_method = candidates[best_compression];
+    auto compression_state = best_compression_method->initialize_compression(col_data, *candidate_states[best_compression]);
+    for(auto &segment : segment_list) {
 		ColumnScanState state;
 		segment->InitializeScan(state);
 		for (idx_t vector_index = 0; vector_index * STANDARD_VECTOR_SIZE < segment->count; vector_index++) {
 			idx_t count = MinValue<idx_t>(segment->count - vector_index * STANDARD_VECTOR_SIZE, STANDARD_VECTOR_SIZE);
 			segment->ScanCommitted(state, vector_index, intermediate);
-			AppendData(new_tree, col_idx, intermediate, count);
+
+			idx_t remaining = count;
+			while(remaining > 0) {
+                idx_t compress_count = best_compression_method->compress_data(*block, data_written, intermediate, count, *compression_state);
+				remaining -= compress_count;
+				if (remaining > 0) {
+					FlushCompressionState(*best_compression_method, *compression_state, *block, data_written, new_tree, col_idx);
+                    data_written = 0;
+				}
+			}
 		}
-		// move to the next segment in the list
-		owned_segment = move(segment->next);
-		segment = (ColumnSegment *)owned_segment.get();
 	}
-	// flush the final segment
-	FlushSegment(new_tree, col_idx);
-	// replace the old tree with the new one
-	col_data.data.Replace(new_tree);
+	if (data_written > 0) {
+        FlushCompressionState(*best_compression_method, *compression_state, *block, data_written, new_tree, col_idx);
+	}
 }
+
+void TableDataWriter::FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state, Block &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
+    DataPointer pointer;
+    pointer.offset = 0;
+    pointer.aux_offset = data_written;
+    best_compression_method.flush_state(block, data_written, compression_state);
+    FlushBlock(pointer, block, data_written, new_tree, col_idx);
+    data_written = 0;
+}
+
+void TableDataWriter::FlushBlock(DataPointer &pointer, Block &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
+
+}
+
 
 void TableDataWriter::CheckpointDeletes(MorselInfo *morsel_info) {
 	// deletes! write them after the data pointers

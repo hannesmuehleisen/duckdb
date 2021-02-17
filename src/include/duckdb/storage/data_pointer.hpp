@@ -20,6 +20,7 @@ public:
 	uint64_t tuple_count;
 	block_id_t block_id;
 	uint32_t offset;
+	uint32_t aux_offset;
 	//! Type-specific statistics of the segment
 	unique_ptr<BaseStatistics> statistics;
 };

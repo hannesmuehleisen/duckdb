@@ -35,6 +35,7 @@ private:
 
 	void CreateSegment(idx_t col_idx);
 	void FlushSegment(SegmentTree &new_tree, idx_t col_idx);
+    void FlushSegmentList(ColumnData &col_data, SegmentTree &new_tree, idx_t col_idx, vector<ColumnSegment*>& segment_list);
 
 	void WriteDataPointers();
 	void VerifyDataPointers();
