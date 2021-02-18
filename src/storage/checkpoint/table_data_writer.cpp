@@ -197,9 +197,23 @@ struct RLECompressionState : public CompressionState {
 // handling strings that are bigger than a block
 // expression rewrite thing
 
+typedef unique_ptr<CompressionState> (*compression_function_init_t)(ColumnData &col_data);
+typedef bool (*compression_function_analyze_t)(Vector& intermediate, idx_t count,  CompressionState& state);
+typedef idx_t (*compression_function_final_analyze_t)(ColumnData &col_data, CompressionState& state);
+typedef unique_ptr<CompressionState> (*compression_function_initialize_compression_t)(ColumnData &col_data, CompressionState& state);
+typedef idx_t (*compression_function_compress_data_t)(BufferHandle &block, idx_t data_written, Vector& intermediate, idx_t count, CompressionState& state);
+typedef idx_t (*compression_function_flush_state_t)(BufferHandle &block, idx_t data_written, CompressionState& state);
+
 
 struct CompressionMethod {
     virtual ~CompressionMethod(){}
+    compression_function_init_t initialize_state;
+    compression_function_analyze_t analyze;
+    compression_function_final_analyze_t final_analyze;
+    compression_function_initialize_compression_t initialize_compression;
+    compression_function_compress_data_t compress_data;
+    compression_function_flush_state_t flush_state;
+
 };
 
 struct RLECompression: public CompressionMethod {
@@ -209,7 +223,7 @@ struct RLECompression: public CompressionMethod {
 
 	bool RLEAnalyze(Vector &input, idx_t count, AnalyzeState &state_p) {
 		auto &state = (RLEAnalyzeState &) state_p;
-		idx_t i;
+		idx_t i = 0;
 		if (state.seen_count == 0) {
 			state.seen_count = 1;
 			state.rle_count = 1;
@@ -367,7 +381,7 @@ void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tr
 	}
 }
 
-void TableDataWriter::FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state, Block &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
+void TableDataWriter::FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
     DataPointer pointer;
     pointer.offset = 0;
     pointer.aux_offset = data_written;
@@ -376,8 +390,8 @@ void TableDataWriter::FlushCompressionState(CompressionMethod &best_compression_
     data_written = 0;
 }
 
-void TableDataWriter::FlushBlock(DataPointer &pointer, Block &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
-
+void TableDataWriter::FlushBlock(DataPointer &pointer, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
+    throw NotImplementedException("eek");
 }
 
 

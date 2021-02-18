@@ -17,6 +17,9 @@ class MorselInfo;
 class BaseStatistics;
 class SegmentStatistics;
 
+struct CompressionState;
+struct CompressionMethod;
+
 //! The table data writer is responsible for writing the data of a table to the block manager
 class TableDataWriter {
 	friend class ColumnData;
@@ -40,7 +43,11 @@ private:
 	void WriteDataPointers();
 	void VerifyDataPointers();
 
-private:
+    void FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx);
+    void FlushBlock(DataPointer &pointer, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx);
+
+
+        private:
 	DatabaseInstance &db;
 	TableCatalogEntry &table;
 	MetaBlockWriter &meta_writer;
