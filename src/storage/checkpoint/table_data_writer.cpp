@@ -153,7 +153,7 @@ struct AnalyzeState {
 };
 
 struct RLEAnalyzeState : public AnalyzeState {
-    RLEState() : seen_count(0), rle_count(0), last_seen_count(0) {
+    RLEAnalyzeState() : seen_count(0), rle_count(0), last_seen_count(0) {
 	}
 
 	idx_t seen_count;
@@ -198,7 +198,11 @@ struct RLECompressionState : public CompressionState {
 // expression rewrite thing
 
 
-struct RLECompression {
+struct CompressionMethod {
+    virtual ~CompressionMethod(){}
+};
+
+struct RLECompression: public CompressionMethod {
     unique_ptr<AnalyzeState> InitializeRLE(ColumnData &col_data) {
 		return make_unique<RLEAnalyzeState>();
 	}
@@ -287,7 +291,7 @@ void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tr
 
 	// set up candidate compression methods
 	vector<unique_ptr<CompressionMethod>> candidates;
-	vector<unique_ptr<CompressionMethodState>> candidate_states;
+	vector<unique_ptr<CompressionState>> candidate_states;
     candidate_states.reserve(candidates.size());
 	for(auto &compression_method : candidates) {
 		candidate_states.push_back(compression_method->initialize_state(col_data));
