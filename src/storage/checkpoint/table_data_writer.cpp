@@ -6,13 +6,15 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/serializer/buffered_serializer.hpp"
 
-#include "duckdb/storage/numeric_segment.hpp"
 #include "duckdb/storage/string_segment.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 #include "duckdb/storage/table/persistent_segment.hpp"
 #include "duckdb/storage/table/transient_segment.hpp"
+#include "duckdb/storage/compressed_segment.hpp"
+
 #include "duckdb/storage/column_data.hpp"
 #include "duckdb/storage/table/morsel_info.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
 
 namespace duckdb {
 
@@ -49,7 +51,6 @@ TableDataWriter::~TableDataWriter() {
 
 void TableDataWriter::WriteTableData() {
 	// allocate the initial segments
-	segments.resize(table.columns.size());
 	data_pointers.resize(table.columns.size());
 	stats.reserve(table.columns.size());
 	column_stats.reserve(table.columns.size());
@@ -70,14 +71,7 @@ void TableDataWriter::WriteTableData() {
 }
 
 void TableDataWriter::CreateSegment(idx_t col_idx) {
-	auto type_id = table.columns[col_idx].type.InternalType();
-	if (type_id == PhysicalType::VARCHAR) {
-		auto string_segment = make_unique<StringSegment>(db, 0);
-		string_segment->overflow_writer = make_unique<WriteOverflowStringsToDisk>(db);
-		segments[col_idx] = move(string_segment);
-	} else {
-		segments[col_idx] = make_unique<NumericSegment>(db, type_id, 0);
-	}
+	D_ASSERT(0);
 }
 
 void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
@@ -91,7 +85,7 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 
 	auto owned_segment = move(col_data.data.root_node);
 
-	vector<ColumnSegment*> scan_segments;
+	vector<unique_ptr<ColumnSegment>> scan_segments;
 	scan_segments.reserve(10);
 
 	auto segment = (ColumnSegment *)owned_segment.get();
@@ -104,10 +98,10 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 				// unchanged persistent segment: no need to write the data
 
 				// flush any segments preceding this persistent segment
-                FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
+				FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
 				/*if (segments[col_idx]->tuple_count > 0) {
-					FlushSegment(new_tree, col_idx);
-					CreateSegment(col_idx);
+				    FlushSegment(new_tree, col_idx);
+				    CreateSegment(col_idx);
 				}*/
 
 				// set up the data pointer directly using the data from the persistent segment
@@ -117,6 +111,8 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 				pointer.row_start = segment->start;
 				pointer.tuple_count = persistent.count;
 				pointer.statistics = persistent.stats.statistics->Copy();
+				pointer.decompress = ((CompressedSegment *)persistent.data.get())->decompress->Copy();
+				pointer.aux_offset = 0;
 
 				// merge the persistent stats into the global column stats
 				column_stats[col_idx]->Merge(*persistent.stats.statistics);
@@ -133,27 +129,27 @@ void TableDataWriter::CheckpointColumn(ColumnData &col_data, idx_t col_idx) {
 			}
 		}
 		// not persisted yet: scan the segment and write it to disk
-        scan_segments.push_back(segment);
-        if (scan_segments.size() > 10) {
-            FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
+		scan_segments.push_back(unique_ptr_cast<SegmentBase, ColumnSegment>(move(owned_segment)));
+		if (scan_segments.size() > 10) {
+			FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
 		}
-        // move to the next segment in the list
+		// move to the next segment in the list
 		owned_segment = move(segment->next);
 		segment = (ColumnSegment *)owned_segment.get();
 	}
 	// flush the final segments
-    FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
+	FlushSegmentList(col_data, new_tree, col_idx, scan_segments);
 	// replace the old tree with the new one
 	col_data.data.Replace(new_tree);
 }
 
-
 struct AnalyzeState {
-    virtual ~AnalyzeState(){}
+	virtual ~AnalyzeState() {
+	}
 };
 
 struct RLEAnalyzeState : public AnalyzeState {
-    RLEAnalyzeState() : seen_count(0), rle_count(0), last_seen_count(0) {
+	RLEAnalyzeState() : seen_count(0), rle_count(0), last_seen_count(0) {
 	}
 
 	idx_t seen_count;
@@ -163,21 +159,21 @@ struct RLEAnalyzeState : public AnalyzeState {
 };
 
 struct CompressionState {
-    virtual ~CompressionState(){}
+	virtual ~CompressionState() {
+	}
 };
 
 struct RLECompressionState : public CompressionState {
-    RLECompressionState() : seen_value(false), last_seen_count(0) {
-    }
+	RLECompressionState() : seen_value(false), last_seen_count(0) {
+	}
 
 	bool seen_value;
-    idx_t last_seen_count;
-    Value last_value;
+	idx_t last_seen_count;
+	Value last_value;
 };
 
 // expression rewriter on complex filter pushdown
 // 42 + X >= 43
-
 
 // separate tasks (in arbitrary order)
 
@@ -190,39 +186,55 @@ struct RLECompressionState : public CompressionState {
 // task 3
 // move updates from in-place to out of place somehow
 
-// task 4?
+// task 4
 // scan handles not vector aligned blocks on disk
 
 // end to end compression with rle or something
 // handling strings that are bigger than a block
 // expression rewrite thing
 
-typedef unique_ptr<CompressionState> (*compression_function_init_t)(ColumnData &col_data);
-typedef bool (*compression_function_analyze_t)(Vector& intermediate, idx_t count,  CompressionState& state);
-typedef idx_t (*compression_function_final_analyze_t)(ColumnData &col_data, CompressionState& state);
-typedef unique_ptr<CompressionState> (*compression_function_initialize_compression_t)(ColumnData &col_data, CompressionState& state);
-typedef idx_t (*compression_function_compress_data_t)(BufferHandle &block, idx_t data_written, Vector& intermediate, idx_t count, CompressionState& state);
-typedef idx_t (*compression_function_flush_state_t)(BufferHandle &block, idx_t data_written, CompressionState& state);
-
+typedef unique_ptr<AnalyzeState> (*compression_function_init_t)(ColumnData &col_data);
+typedef bool (*compression_function_analyze_t)(Vector &intermediate, idx_t count, AnalyzeState &state);
+typedef idx_t (*compression_function_final_analyze_t)(ColumnData &col_data, AnalyzeState &state,
+                                                      BaseStatistics &statistics);
+typedef unique_ptr<CompressionState> (*compression_function_initialize_compression_t)(ColumnData &col_data,
+                                                                                      AnalyzeState &state);
+typedef idx_t (*compression_function_compress_data_t)(BufferHandle &block, idx_t &data_written, Vector &intermediate,
+                                                      idx_t count, CompressionState &state);
+typedef void (*compression_function_flush_state_t)(BufferHandle &block, idx_t &data_written, CompressionState &state);
 
 struct CompressionMethod {
-    virtual ~CompressionMethod(){}
-    compression_function_init_t initialize_state;
-    compression_function_analyze_t analyze;
-    compression_function_final_analyze_t final_analyze;
-    compression_function_initialize_compression_t initialize_compression;
-    compression_function_compress_data_t compress_data;
-    compression_function_flush_state_t flush_state;
-
+	CompressionMethod()
+	    : initialize_state(nullptr), analyze(nullptr), final_analyze(nullptr), initialize_compression(nullptr),
+	      compress_data(nullptr), flush_state(nullptr) {
+	}
+	virtual ~CompressionMethod() {
+	}
+	compression_function_init_t initialize_state;
+	compression_function_analyze_t analyze;
+	compression_function_final_analyze_t final_analyze;
+	compression_function_initialize_compression_t initialize_compression;
+	compression_function_compress_data_t compress_data;
+	compression_function_flush_state_t flush_state;
 };
 
-struct RLECompression: public CompressionMethod {
-    unique_ptr<AnalyzeState> InitializeRLE(ColumnData &col_data) {
+struct RLECompression : public CompressionMethod {
+
+	RLECompression() {
+		initialize_state = InitializeRLE;
+		analyze = RLEAnalyze;
+		final_analyze = RLEFinalize;
+		initialize_compression = InitializeRLECompression;
+		compress_data = RLECompress;
+		flush_state = RLECompressFinalize;
+	}
+
+	static unique_ptr<AnalyzeState> InitializeRLE(ColumnData &col_data) {
 		return make_unique<RLEAnalyzeState>();
 	}
 
-	bool RLEAnalyze(Vector &input, idx_t count, AnalyzeState &state_p) {
-		auto &state = (RLEAnalyzeState &) state_p;
+	static bool RLEAnalyze(Vector &input, idx_t count, AnalyzeState &state_p) {
+		auto &state = (RLEAnalyzeState &)state_p;
 		idx_t i = 0;
 		if (state.seen_count == 0) {
 			state.seen_count = 1;
@@ -231,7 +243,7 @@ struct RLECompression: public CompressionMethod {
 			state.last_value = input.GetValue(0);
 			i = 1;
 		}
-		for(; i < count; i++) {
+		for (; i < count; i++) {
 			auto new_value = input.GetValue(i);
 			if (state.last_value != new_value || state.last_seen_count >= NumericLimits<uint16_t>::Maximum()) {
 				state.rle_count++;
@@ -249,103 +261,123 @@ struct RLECompression: public CompressionMethod {
 		return true;
 	}
 
-	idx_t RLEFinalize(ColumnData &col_data, CompressionState &state_p) {
-        auto &state = (RLEAnalyzeState &) state_p;
+	static idx_t RLEFinalize(ColumnData &col_data, AnalyzeState &state_p, BaseStatistics &statistics) {
+		auto &state = (RLEAnalyzeState &)state_p;
 		return (GetTypeIdSize(col_data.type.InternalType()) + sizeof(uint16_t)) * state.rle_count;
-    }
-
-	unique_ptr<CompressionState> InitializeRLECompression(ColumnData &col_data, AnalyzeState &state_p) {
-        return make_unique<RLECompressionState>();
 	}
-    //idx_t compress_count = best_compression_method->compress_data(*block, data_written, intermediate, *compression_state);
 
-    idx_t RLECompress(Block &block, idx_t &offset_in_block, Vector &input, idx_t count, CompressionState &state_p) {
-		auto &state = (RLECompressionState &) state_p;
+	static unique_ptr<CompressionState> InitializeRLECompression(ColumnData &col_data, AnalyzeState &state_p) {
+		return make_unique<RLECompressionState>();
+	}
+
+	static idx_t RLECompress(BufferHandle &block, idx_t &offset_in_block, Vector &input, idx_t count,
+	                         CompressionState &state_p) {
+		auto &state = (RLECompressionState &)state_p;
 
 		idx_t i = 0;
-        if (!state.seen_value) {
-            state.last_seen_count = 1;
-            state.last_value = input.GetValue(0);
-            i = 1;
-        }
+		if (!state.seen_value) {
+			state.last_seen_count = 1;
+			state.last_value = input.GetValue(0);
+			i = 1;
+		}
 		idx_t RLE_SIZE = sizeof(uint16_t) + sizeof(int32_t);
-		auto write_pointer = block.buffer;
-        for(; i < count; i++) {
-            auto new_value = input.GetValue(i);
-            if (state.last_value != new_value || state.last_seen_count >= NumericLimits<uint16_t>::Maximum()) {
-                // write the value
-                Store<uint16_t>(state.last_seen_count, write_pointer + offset_in_block);
-                offset_in_block += sizeof(uint16_t);
-                Store<int32_t>(state.last_value.GetValue<int32_t>(), write_pointer + offset_in_block);
-                offset_in_block += sizeof(int32_t);
+		auto write_pointer = block.Ptr();
+		for (; i < count; i++) {
+			auto new_value = input.GetValue(i);
+			if (state.last_value != new_value || state.last_seen_count >= NumericLimits<uint16_t>::Maximum()) {
+				// write the value
+				Store<uint16_t>(state.last_seen_count, write_pointer + offset_in_block);
+				offset_in_block += sizeof(uint16_t);
+				Store<int32_t>(state.last_value.GetValue<int32_t>(), write_pointer + offset_in_block);
+				offset_in_block += sizeof(int32_t);
 
-                // reset
-                state.last_seen_count = 1;
-                state.last_value = new_value;
+				// reset
+				state.last_seen_count = 1;
+				state.last_value = new_value;
 
 				// check if we have space for the last value or not
 				// if not, abort
-				if (offset_in_block + RLE_SIZE > block.size) {
+				if (offset_in_block + RLE_SIZE > block.node->size) {
 					return i - 1;
 				}
-            } else {
-                state.last_seen_count++;
-            }
-        }
+			} else {
+				state.last_seen_count++;
+			}
+		}
+
 		return count;
-    }
+	}
+
+	static void RLECompressFinalize(BufferHandle &block, idx_t &data_written, CompressionState &state_p) {
+		// nop
+		auto &state = (RLECompressionState &)state_p;
+		auto write_pointer = block.Ptr();
+
+		Store<uint16_t>(state.last_seen_count, write_pointer + data_written);
+		data_written += sizeof(uint16_t);
+		Store<int32_t>(state.last_value.GetValue<int32_t>(), write_pointer + data_written);
+		data_written += sizeof(int32_t);
+	}
 };
 
-void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tree, idx_t col_idx, vector<ColumnSegment*>& segment_list) {
+void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tree, idx_t col_idx,
+                                       vector<unique_ptr<ColumnSegment>> &segment_list) {
 	if (segment_list.size() == 0) {
 		return;
 	}
 
-    Vector intermediate(col_data.type);
+	Vector intermediate(col_data.type);
 
 	// set up candidate compression methods
 	vector<unique_ptr<CompressionMethod>> candidates;
-	vector<unique_ptr<CompressionState>> candidate_states;
-    candidate_states.reserve(candidates.size());
-	for(auto &compression_method : candidates) {
+
+	candidates.push_back(make_unique<RLECompression>());
+
+	vector<unique_ptr<AnalyzeState>> candidate_states;
+	candidate_states.reserve(candidates.size());
+	for (auto &compression_method : candidates) {
 		candidate_states.push_back(compression_method->initialize_state(col_data));
 	}
 
 	// call analyze on all of the compression methods
-    for(auto &segment : segment_list) {
-        ColumnScanState state;
-        segment->InitializeScan(state);
-        for (idx_t vector_index = 0; vector_index * STANDARD_VECTOR_SIZE < segment->count; vector_index++) {
-            idx_t count = MinValue<idx_t>(segment->count - vector_index * STANDARD_VECTOR_SIZE, STANDARD_VECTOR_SIZE);
-            segment->ScanCommitted(state, vector_index, intermediate);
-			for(idx_t i = 0; i < candidates.size(); i++) {
+	for (auto &segment : segment_list) {
+		ColumnScanState state;
+		segment->InitializeScan(state);
+		for (idx_t vector_index = 0; vector_index * STANDARD_VECTOR_SIZE < segment->count; vector_index++) {
+			idx_t count = MinValue<idx_t>(segment->count - vector_index * STANDARD_VECTOR_SIZE, STANDARD_VECTOR_SIZE);
+			segment->ScanCommitted(state, vector_index, intermediate);
+			stats[col_idx]->statistics->Update(intermediate, count);
+
+			for (idx_t i = 0; i < candidates.size(); i++) {
 				auto &compression_method = candidates[i];
 				auto &compression_state = candidate_states[i];
 				if (!compression_method) {
 					continue;
 				}
-			    //
-                bool keep_candidate = compression_method->analyze(intermediate, count, *compression_state);
+				//
+
+				bool keep_candidate = compression_method->analyze(intermediate, count, *compression_state);
 				if (!keep_candidate) {
 					compression_method.reset();
-                    compression_state.reset();
+					compression_state.reset();
 				}
 			}
-        }
+		}
 	}
 
 	idx_t best_compression = INVALID_INDEX;
 	idx_t smallest_size = NumericLimits<idx_t>::Maximum();
-    for(idx_t i = 0; i < candidates.size(); i++) {
+	for (idx_t i = 0; i < candidates.size(); i++) {
 		auto &compression_method = candidates[i];
 		auto &compression_state = candidate_states[i];
 		if (!compression_method) {
 			continue;
 		}
-		idx_t result_size = compression_method->final_analyze(col_data, *compression_state);
+		idx_t result_size =
+		    compression_method->final_analyze(col_data, *compression_state, *stats[col_idx]->statistics);
 		if (result_size < smallest_size) {
 			smallest_size = result_size;
-            best_compression = i;
+			best_compression = i;
 		}
 	}
 
@@ -356,9 +388,12 @@ void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tr
 	// SSSSSDDDDD
 	//
 
+	idx_t compressed_rows = 0;
+
 	auto &best_compression_method = candidates[best_compression];
-    auto compression_state = best_compression_method->initialize_compression(col_data, *candidate_states[best_compression]);
-    for(auto &segment : segment_list) {
+	auto compression_state =
+	    best_compression_method->initialize_compression(col_data, *candidate_states[best_compression]);
+	for (auto &segment : segment_list) {
 		ColumnScanState state;
 		segment->InitializeScan(state);
 		for (idx_t vector_index = 0; vector_index * STANDARD_VECTOR_SIZE < segment->count; vector_index++) {
@@ -366,34 +401,79 @@ void TableDataWriter::FlushSegmentList(ColumnData &col_data, SegmentTree &new_tr
 			segment->ScanCommitted(state, vector_index, intermediate);
 
 			idx_t remaining = count;
-			while(remaining > 0) {
-                idx_t compress_count = best_compression_method->compress_data(*block, data_written, intermediate, count, *compression_state);
+			while (remaining > 0) {
+				idx_t compress_count = best_compression_method->compress_data(*block, data_written, intermediate, count,
+				                                                              *compression_state);
 				remaining -= compress_count;
+				compressed_rows += compress_count;
 				if (remaining > 0) {
-					FlushCompressionState(*best_compression_method, *compression_state, *block, data_written, new_tree, col_idx);
-                    data_written = 0;
+					FlushCompressionState(*best_compression_method, *compression_state, *block, data_written, new_tree,
+					                      col_idx, compressed_rows);
+					data_written = 0;
+					compressed_rows = 0;
 				}
 			}
 		}
 	}
 	if (data_written > 0) {
-        FlushCompressionState(*best_compression_method, *compression_state, *block, data_written, new_tree, col_idx);
+		FlushCompressionState(*best_compression_method, *compression_state, *block, data_written, new_tree, col_idx,
+		                      compressed_rows);
 	}
 }
 
-void TableDataWriter::FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
-    DataPointer pointer;
-    pointer.offset = 0;
-    pointer.aux_offset = data_written;
-    best_compression_method.flush_state(block, data_written, compression_state);
-    FlushBlock(pointer, block, data_written, new_tree, col_idx);
-    data_written = 0;
+void TableDataWriter::FlushCompressionState(CompressionMethod &best_compression_method,
+                                            CompressionState &compression_state, BufferHandle &block,
+                                            idx_t data_written, SegmentTree &new_tree, idx_t col_idx,
+                                            idx_t compressed_rows) {
+	DataPointer pointer;
+	pointer.offset = 0;
+	pointer.aux_offset = data_written;
+	pointer.tuple_count = compressed_rows;
+
+	if (compressed_rows == 0) {
+		return;
+	}
+
+	vector<unique_ptr<ParsedExpression>> children;
+	pointer.decompress = make_unique<FunctionExpression>("rle", children);
+	best_compression_method.flush_state(block, data_written, compression_state);
+	FlushBlock(pointer, block, data_written, new_tree, col_idx);
+	data_written = 0;
 }
 
-void TableDataWriter::FlushBlock(DataPointer &pointer, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx) {
-    throw NotImplementedException("eek");
-}
+void TableDataWriter::FlushBlock(DataPointer &pointer, BufferHandle &block, idx_t data_written, SegmentTree &new_tree,
+                                 idx_t col_idx) {
 
+	// get the buffer of the segment and pin it
+	auto &block_manager = BlockManager::GetBlockManager(db);
+
+	// get a free block id to write to
+	auto block_id = block_manager.GetFreeBlockId();
+
+	// construct the data pointer
+	uint32_t offset_in_block = 0;
+
+	pointer.block_id = block_id;
+	pointer.offset = offset_in_block;
+	pointer.row_start = 0;
+	if (!data_pointers[col_idx].empty()) {
+		auto &last_pointer = data_pointers[col_idx].back();
+		pointer.row_start = last_pointer.row_start + last_pointer.tuple_count;
+	}
+	pointer.statistics = stats[col_idx]->statistics->Copy();
+
+	// construct a persistent segment that points to this block, and append it to the new segment tree
+	auto persistent_segment = make_unique<PersistentSegment>(db, table.columns[col_idx].type, pointer);
+	new_tree.AppendSegment(move(persistent_segment));
+
+	data_pointers[col_idx].push_back(move(pointer));
+	// write the block to disk
+	block_manager.Write(*block.node, block_id);
+
+	column_stats[col_idx]->Merge(*stats[col_idx]->statistics);
+	stats[col_idx] = make_unique<SegmentStatistics>(table.columns[col_idx].type,
+	                                                GetTypeIdSize(table.columns[col_idx].type.InternalType()));
+}
 
 void TableDataWriter::CheckpointDeletes(MorselInfo *morsel_info) {
 	// deletes! write them after the data pointers
@@ -425,67 +505,11 @@ void TableDataWriter::CheckpointDeletes(MorselInfo *morsel_info) {
 }
 
 void TableDataWriter::AppendData(SegmentTree &new_tree, idx_t col_idx, Vector &data, idx_t count) {
-	idx_t offset = 0;
-	while (count > 0) {
-		idx_t appended = segments[col_idx]->Append(*stats[col_idx], data, offset, count);
-		if (appended == count) {
-			// appended everything: finished
-			return;
-		}
-		// the segment is full: flush it to disk
-		FlushSegment(new_tree, col_idx);
-
-		// now create a new segment and continue appending
-		CreateSegment(col_idx);
-		offset += appended;
-		count -= appended;
-	}
+	D_ASSERT(0);
 }
 
 void TableDataWriter::FlushSegment(SegmentTree &new_tree, idx_t col_idx) {
-	auto tuple_count = segments[col_idx]->tuple_count;
-	if (tuple_count == 0) {
-		return;
-	}
-
-	// get the buffer of the segment and pin it
-	auto &buffer_manager = BufferManager::GetBufferManager(db);
-	auto &block_manager = BlockManager::GetBlockManager(db);
-
-	auto handle = buffer_manager.Pin(segments[col_idx]->block);
-
-	// get a free block id to write to
-	auto block_id = block_manager.GetFreeBlockId();
-
-	// construct the data pointer
-	uint32_t offset_in_block = 0;
-
-	DataPointer data_pointer;
-	data_pointer.block_id = block_id;
-	data_pointer.offset = offset_in_block;
-	data_pointer.row_start = 0;
-	if (!data_pointers[col_idx].empty()) {
-		auto &last_pointer = data_pointers[col_idx].back();
-		data_pointer.row_start = last_pointer.row_start + last_pointer.tuple_count;
-	}
-	data_pointer.tuple_count = tuple_count;
-	data_pointer.statistics = stats[col_idx]->statistics->Copy();
-
-	// construct a persistent segment that points to this block, and append it to the new segment tree
-	auto persistent_segment = make_unique<PersistentSegment>(db, block_id, offset_in_block, table.columns[col_idx].type,
-	                                                         data_pointer.row_start, data_pointer.tuple_count,
-	                                                         stats[col_idx]->statistics->Copy());
-	new_tree.AppendSegment(move(persistent_segment));
-
-	data_pointers[col_idx].push_back(move(data_pointer));
-	// write the block to disk
-	block_manager.Write(*handle->node, block_id);
-
-	column_stats[col_idx]->Merge(*stats[col_idx]->statistics);
-	stats[col_idx] = make_unique<SegmentStatistics>(table.columns[col_idx].type,
-	                                                GetTypeIdSize(table.columns[col_idx].type.InternalType()));
-	handle.reset();
-	segments[col_idx] = nullptr;
+	D_ASSERT(0);
 }
 
 void TableDataWriter::VerifyDataPointers() {
@@ -498,9 +522,6 @@ void TableDataWriter::VerifyDataPointers() {
 		for (idx_t k = 0; k < data_pointer_list.size(); k++) {
 			auto &data_pointer = data_pointer_list[k];
 			column_count += data_pointer.tuple_count;
-		}
-		if (segments[i]) {
-			column_count += segments[i]->tuple_count;
 		}
 		if (i == 0) {
 			table_count = column_count;
@@ -528,6 +549,7 @@ void TableDataWriter::WriteDataPointers() {
 			meta_writer.Write<idx_t>(data_pointer.tuple_count);
 			meta_writer.Write<block_id_t>(data_pointer.block_id);
 			meta_writer.Write<uint32_t>(data_pointer.offset);
+			data_pointer.decompress->Serialize(meta_writer);
 			data_pointer.statistics->Serialize(meta_writer);
 		}
 	}

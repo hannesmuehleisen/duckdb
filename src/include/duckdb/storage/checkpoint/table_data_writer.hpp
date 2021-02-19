@@ -38,21 +38,23 @@ private:
 
 	void CreateSegment(idx_t col_idx);
 	void FlushSegment(SegmentTree &new_tree, idx_t col_idx);
-    void FlushSegmentList(ColumnData &col_data, SegmentTree &new_tree, idx_t col_idx, vector<ColumnSegment*>& segment_list);
+	void FlushSegmentList(ColumnData &col_data, SegmentTree &new_tree, idx_t col_idx,
+	                      vector<unique_ptr<ColumnSegment>> &segment_list);
 
 	void WriteDataPointers();
 	void VerifyDataPointers();
 
-    void FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx);
-    void FlushBlock(DataPointer &pointer, BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx);
+	void FlushCompressionState(CompressionMethod &best_compression_method, CompressionState &compression_state,
+	                           BufferHandle &block, idx_t data_written, SegmentTree &new_tree, idx_t col_idx,
+	                           idx_t compressed_rows);
+	void FlushBlock(DataPointer &pointer, BufferHandle &block, idx_t data_written, SegmentTree &new_tree,
+	                idx_t col_idx);
 
-
-        private:
+private:
 	DatabaseInstance &db;
 	TableCatalogEntry &table;
 	MetaBlockWriter &meta_writer;
 
-	vector<unique_ptr<UncompressedSegment>> segments;
 	vector<unique_ptr<SegmentStatistics>> stats;
 	vector<unique_ptr<BaseStatistics>> column_stats;
 

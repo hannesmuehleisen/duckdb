@@ -196,4 +196,19 @@ void StringStatistics::Verify(Vector &vector, idx_t count) {
 	}
 }
 
+void StringStatistics::Update(Vector &vector, idx_t count) {
+	VectorData vdata;
+	vector.Orrify(count, vdata);
+
+	auto data = (string_t *)vdata.data;
+	for (idx_t i = 0; i < count; i++) {
+		auto index = vdata.sel->get_index(i);
+		if ((*vdata.nullmask)[index]) {
+			has_null = true;
+			continue;
+		}
+		Update(data[index]);
+	}
+}
+
 } // namespace duckdb

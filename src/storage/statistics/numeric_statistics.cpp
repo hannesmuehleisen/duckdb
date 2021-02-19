@@ -118,4 +118,68 @@ void NumericStatistics::Verify(Vector &vector, idx_t count) {
 	}
 }
 
+template <class T>
+void NumericStatistics::TemplatedUpdate(Vector &vector, idx_t count) {
+	VectorData vdata;
+	vector.Orrify(count, vdata);
+
+	auto data = (T *)vdata.data;
+	for (idx_t i = 0; i < count; i++) {
+		auto index = vdata.sel->get_index(i);
+		if ((*vdata.nullmask)[index]) {
+			has_null = true;
+			continue;
+		}
+		if (!min.is_null && LessThan::Operation(data[index], min.GetValueUnsafe<T>())) {
+			min = Value::CreateValue<T>(data[index]);
+		}
+		if (!max.is_null && GreaterThan::Operation(data[index], max.GetValueUnsafe<T>())) {
+			max = Value::CreateValue<T>(data[index]);
+		}
+	}
+}
+
+void NumericStatistics::Update(Vector &vector, idx_t count) {
+	switch (type.InternalType()) {
+	case PhysicalType::BOOL:
+		TemplatedUpdate<bool>(vector, count);
+		break;
+	case PhysicalType::INT8:
+		TemplatedUpdate<int8_t>(vector, count);
+		break;
+	case PhysicalType::INT16:
+		TemplatedUpdate<int16_t>(vector, count);
+		break;
+	case PhysicalType::INT32:
+		TemplatedUpdate<int32_t>(vector, count);
+		break;
+	case PhysicalType::INT64:
+		TemplatedUpdate<int64_t>(vector, count);
+		break;
+	case PhysicalType::UINT8:
+		TemplatedUpdate<uint8_t>(vector, count);
+		break;
+	case PhysicalType::UINT16:
+		TemplatedUpdate<uint16_t>(vector, count);
+		break;
+	case PhysicalType::UINT32:
+		TemplatedUpdate<uint32_t>(vector, count);
+		break;
+	case PhysicalType::UINT64:
+		TemplatedUpdate<uint64_t>(vector, count);
+		break;
+	case PhysicalType::INT128:
+		TemplatedUpdate<hugeint_t>(vector, count);
+		break;
+	case PhysicalType::FLOAT:
+		TemplatedUpdate<float>(vector, count);
+		break;
+	case PhysicalType::DOUBLE:
+		TemplatedUpdate<double>(vector, count);
+		break;
+	default:
+		throw InternalException("Unsupported type %s for numeric statistics verify", type.ToString());
+	}
+}
+
 } // namespace duckdb

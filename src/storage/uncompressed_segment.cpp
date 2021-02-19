@@ -1,7 +1,6 @@
-#include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
-#include "duckdb/common/vector_operations/vector_operations.hpp"
+
 #include "duckdb/storage/uncompressed_segment.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/vector.hpp"
@@ -12,8 +11,8 @@
 
 namespace duckdb {
 
-UncompressedSegment::UncompressedSegment(DatabaseInstance &db, PhysicalType type, idx_t row_start)
-    : db(db), type(type), max_vector_count(0), tuple_count(0), row_start(row_start), versions(nullptr) {
+UncompressedSegment::UncompressedSegment(DatabaseInstance &db_p, PhysicalType type_p, idx_t row_start_p)
+    : AbstractSegment(db_p, type_p, row_start_p), max_vector_count(0), versions(nullptr) {
 }
 
 UncompressedSegment::~UncompressedSegment() {

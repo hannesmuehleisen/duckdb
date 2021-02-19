@@ -41,6 +41,8 @@ public:
 
 	bool CheckZonemap(ExpressionType comparison_type, const string &value);
 
+	void Update(Vector &vector, idx_t count) override;
+
 	string ToString() override;
 };
 

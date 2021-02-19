@@ -1,29 +1,21 @@
 #include "duckdb/storage/table/persistent_segment.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/vector.hpp"
-#include "duckdb/common/vector_operations/vector_operations.hpp"
-#include "duckdb/common/types/null_value.hpp"
 #include "duckdb/storage/checkpoint/table_data_writer.hpp"
-#include "duckdb/storage/meta_block_reader.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
-#include "duckdb/storage/numeric_segment.hpp"
-#include "duckdb/storage/string_segment.hpp"
+#include "duckdb/storage/compressed_segment.hpp"
 
 namespace duckdb {
 
-PersistentSegment::PersistentSegment(DatabaseInstance &db, block_id_t id, idx_t offset, const LogicalType &type_p,
-                                     idx_t start, idx_t count, unique_ptr<BaseStatistics> statistics)
-    : ColumnSegment(type_p, ColumnSegmentType::PERSISTENT, start, count, move(statistics)), db(db), block_id(id),
-      offset(offset) {
+PersistentSegment::PersistentSegment(DatabaseInstance &db, const LogicalType &type_p, DataPointer &pointer)
+    : ColumnSegment(type_p, ColumnSegmentType::PERSISTENT, pointer.row_start, pointer.tuple_count,
+                    pointer.statistics->Copy()),
+      db(db), block_id(pointer.block_id), offset(pointer.offset) {
 	D_ASSERT(offset == 0);
-	if (type.InternalType() == PhysicalType::VARCHAR) {
-		data = make_unique<StringSegment>(db, start, id);
-		data->max_vector_count = count / STANDARD_VECTOR_SIZE + (count % STANDARD_VECTOR_SIZE == 0 ? 0 : 1);
-	} else {
-		data = make_unique<NumericSegment>(db, type.InternalType(), start, id);
-	}
-	data->tuple_count = count;
+
+	data = make_unique<CompressedSegment>(db, type.InternalType(), pointer.row_start, pointer.decompress->Copy(),
+	                                      pointer.block_id, pointer.tuple_count);
 }
 
 void PersistentSegment::InitializeScan(ColumnScanState &state) {
@@ -63,13 +55,8 @@ void PersistentSegment::FetchRow(ColumnFetchState &state, Transaction &transacti
 
 void PersistentSegment::Update(ColumnData &column_data, Transaction &transaction, Vector &updates, row_t *ids,
                                idx_t count) {
-	// update of persistent segment: check if the table has been updated before
-	if (block_id == data->block->BlockId()) {
-		// data has not been updated before! convert the segment from one that refers to an on-disk block to one that
-		// refers to a in-memory buffer
-		data->ToTemporary();
-	}
-	data->Update(column_data, stats, transaction, updates, ids, count, this->start);
+
+	throw InternalException("Can't update persistent segments");
 }
 
 bool PersistentSegment::HasChanges() {

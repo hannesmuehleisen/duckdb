@@ -14,11 +14,11 @@
 
 namespace duckdb {
 class DatabaseInstance;
+class DataPointer;
 
 class PersistentSegment : public ColumnSegment {
 public:
-	PersistentSegment(DatabaseInstance &db, block_id_t id, idx_t offset, const LogicalType &type, idx_t start,
-	                  idx_t count, unique_ptr<BaseStatistics> statistics);
+	PersistentSegment(DatabaseInstance &db, const LogicalType &type_p, DataPointer &pointer);
 
 	//! The storage manager
 	DatabaseInstance &db;
@@ -27,7 +27,7 @@ public:
 	//! The offset into the block
 	idx_t offset;
 	//! The uncompressed segment that the data of the persistent segment is loaded into
-	unique_ptr<UncompressedSegment> data;
+	unique_ptr<AbstractSegment> data;
 
 public:
 	bool HasChanges();

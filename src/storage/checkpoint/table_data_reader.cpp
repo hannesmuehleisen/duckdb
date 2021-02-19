@@ -43,13 +43,12 @@ void TableDataReader::ReadTableData() {
 			data_pointer.tuple_count = reader.Read<idx_t>();
 			data_pointer.block_id = reader.Read<block_id_t>();
 			data_pointer.offset = reader.Read<uint32_t>();
+			data_pointer.decompress = ParsedExpression::Deserialize(reader);
 			data_pointer.statistics = BaseStatistics::Deserialize(reader, column.type);
 
 			column_count += data_pointer.tuple_count;
 			// create a persistent segment
-			auto segment = make_unique<PersistentSegment>(db, data_pointer.block_id, data_pointer.offset, column.type,
-			                                              data_pointer.row_start, data_pointer.tuple_count,
-			                                              move(data_pointer.statistics));
+			auto segment = make_unique<PersistentSegment>(db, column.type, data_pointer);
 			info.data->table_data[col].push_back(move(segment));
 		}
 		if (col == 0) {

@@ -38,6 +38,8 @@ public:
 	//! Verify that a vector does not violate the statistics
 	virtual void Verify(Vector &vector, idx_t count);
 
+	virtual void Update(Vector &vector, idx_t count);
+
 	virtual string ToString();
 };
 
