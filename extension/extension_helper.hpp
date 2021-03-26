@@ -30,6 +30,10 @@
 #include "httpfs-extension.hpp"
 #endif
 
+#ifdef BUILD_RPC_EXTENSION
+#include "rpc-extension.hpp"
+#endif
+
 namespace duckdb {
 class DuckDB;
 
@@ -52,6 +56,9 @@ public:
 #endif
 #ifdef BUILD_HTTPFS_EXTENSION
 		db.LoadExtension<HTTPFsExtension>();
+#endif
+#ifdef BUILD_RPC_EXTENSION
+		db.LoadExtension<RpcExtension>();
 #endif
 	}
 
@@ -87,6 +94,12 @@ public:
 		} else if (extension == "httpfs") {
 #ifdef BUILD_HTTPFS_EXTENSION
 			db.LoadExtension<HTTPFsExtension>();
+#else
+			return ExtensionLoadResult::NOT_LOADED;
+#endif
+		} else if (extension == "rpc") {
+#ifdef BUILD_RPC_EXTENSION
+			db.LoadExtension<RpcExtension>();
 #else
 			return ExtensionLoadResult::NOT_LOADED;
 #endif
