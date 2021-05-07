@@ -387,7 +387,7 @@ void sqlite3VXPrintf(StrAccum *pAccum, /* Accumulate results here */
 			/* Fall through into the next case */
 		case etDECIMAL:
 			if (infop->flags & FLAG_SIGNED) {
-				i64 v;
+				i64 v = 0;
 				if (bArgList) {
 					// v = getIntArg(pArgList);
 					assert(0);
@@ -793,7 +793,7 @@ void sqlite3VXPrintf(StrAccum *pAccum, /* Accumulate results here */
 			int needQuote;
 			char ch;
 			char q = ((xtype == etSQLESCAPE3) ? '"' : '\''); /* Quote character */
-			char *escarg;
+			char *escarg = 0;
 
 			if (bArgList) {
 				assert(0);
@@ -919,7 +919,7 @@ void sqlite3VXPrintf(StrAccum *pAccum, /* Accumulate results here */
 ** after the attempted enlargement.  The value returned might be zero.
 */
 static int sqlite3StrAccumEnlarge(StrAccum *p, int N) {
-	char *zNew;
+	char *zNew = 0;
 	assert(p->nChar + (i64)N >= p->nAlloc); /* Only called if really needed */
 	if (p->accError) {
 		// testcase(p->accError==STRACCUM_TOOBIG);
