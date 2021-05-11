@@ -206,25 +206,28 @@ using socket_t = int;
 #include <thread>
 
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
-#include <openssl/err.h>
-#include <openssl/md5.h>
-#include <openssl/ssl.h>
-#include <openssl/x509v3.h>
+#include "tlse.h"
+#include "tlse-additions.h"
 
-#if defined(_WIN32) && defined(OPENSSL_USE_APPLINK)
-#include <openssl/applink.c>
-#endif
-
-#include <iostream>
-#include <sstream>
-
-
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-#include <openssl/crypto.h>
-inline const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *asn1) {
-  return M_ASN1_STRING_data(asn1);
-}
-#endif
+//#include <openssl/err.h>
+//#include <openssl/md5.h>
+//#include <openssl/ssl.h>
+//#include <openssl/x509v3.h>
+//
+//#if defined(_WIN32) && defined(OPENSSL_USE_APPLINK)
+//#include <openssl/applink.c>
+//#endif
+//
+//#include <iostream>
+//#include <sstream>
+//
+//
+//#if OPENSSL_VERSION_NUMBER < 0x10100000L
+//#include <openssl/crypto.h>
+//inline const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *asn1) {
+//  return M_ASN1_STRING_data(asn1);
+//}
+//#endif
 #endif
 
 #ifdef CPPHTTPLIB_ZLIB_SUPPORT
@@ -6314,9 +6317,9 @@ inline SSL *ssl_new(socket_t sock, SSL_CTX *ctx, std::mutex &ctx_mutex,
 
   if (ssl) {
     set_nonblocking(sock, true);
-    auto bio = BIO_new_socket(static_cast<int>(sock), BIO_NOCLOSE);
-    BIO_set_nbio(bio, 1);
-    SSL_set_bio(ssl, bio, bio);
+//    auto bio = BIO_new_socket(static_cast<int>(sock), BIO_NOCLOSE);
+//    BIO_set_nbio(bio, 1);
+//    SSL_set_bio(ssl, bio, bio);
 
     if (!setup(ssl) || SSL_connect_or_accept(ssl) != 1) {
       SSL_shutdown(ssl);
@@ -6327,7 +6330,7 @@ inline SSL *ssl_new(socket_t sock, SSL_CTX *ctx, std::mutex &ctx_mutex,
       set_nonblocking(sock, false);
       return nullptr;
     }
-    BIO_set_nbio(bio, 0);
+//    BIO_set_nbio(bio, 0);
     set_nonblocking(sock, false);
   }
 
@@ -6894,55 +6897,55 @@ inline bool SSLClient::verify_host(X509 *server_cert) const {
 inline bool
 SSLClient::verify_host_with_subject_alt_name(X509 *server_cert) const {
   auto ret = false;
-
-  auto type = GEN_DNS;
-
-  struct in6_addr addr6;
-  struct in_addr addr;
-  size_t addr_len = 0;
-
-#ifndef __MINGW32__
-  if (inet_pton(AF_INET6, host_.c_str(), &addr6)) {
-    type = GEN_IPADD;
-    addr_len = sizeof(struct in6_addr);
-  } else if (inet_pton(AF_INET, host_.c_str(), &addr)) {
-    type = GEN_IPADD;
-    addr_len = sizeof(struct in_addr);
-  }
-#endif
-
-  auto alt_names = static_cast<const struct stack_st_GENERAL_NAME *>(
-      X509_get_ext_d2i(server_cert, NID_subject_alt_name, nullptr, nullptr));
-
-  if (alt_names) {
-    auto dsn_matched = false;
-    auto ip_mached = false;
-
-    auto count = sk_GENERAL_NAME_num(alt_names);
-
-    for (decltype(count) i = 0; i < count && !dsn_matched; i++) {
-      auto val = sk_GENERAL_NAME_value(alt_names, i);
-      if (val->type == type) {
-        auto name = (const char *)ASN1_STRING_get0_data(val->d.ia5);
-        auto name_len = (size_t)ASN1_STRING_length(val->d.ia5);
-
-        switch (type) {
-        case GEN_DNS: dsn_matched = check_host_name(name, name_len); break;
-
-        case GEN_IPADD:
-          if (!memcmp(&addr6, name, addr_len) ||
-              !memcmp(&addr, name, addr_len)) {
-            ip_mached = true;
-          }
-          break;
-        }
-      }
-    }
-
-    if (dsn_matched || ip_mached) { ret = true; }
-  }
-
-  GENERAL_NAMES_free((STACK_OF(GENERAL_NAME) *)alt_names);
+//
+//  auto type = GEN_DNS;
+//
+//  struct in6_addr addr6;
+//  struct in_addr addr;
+//  size_t addr_len = 0;
+//
+//#ifndef __MINGW32__
+//  if (inet_pton(AF_INET6, host_.c_str(), &addr6)) {
+//    type = GEN_IPADD;
+//    addr_len = sizeof(struct in6_addr);
+//  } else if (inet_pton(AF_INET, host_.c_str(), &addr)) {
+//    type = GEN_IPADD;
+//    addr_len = sizeof(struct in_addr);
+//  }
+//#endif
+//
+//  auto alt_names = static_cast<const struct stack_st_GENERAL_NAME *>(
+//      X509_get_ext_d2i(server_cert, NID_subject_alt_name, nullptr, nullptr));
+//
+//  if (alt_names) {
+//    auto dsn_matched = false;
+//    auto ip_mached = false;
+//
+//    auto count = sk_GENERAL_NAME_num(alt_names);
+//
+//    for (decltype(count) i = 0; i < count && !dsn_matched; i++) {
+//      auto val = sk_GENERAL_NAME_value(alt_names, i);
+//      if (val->type == type) {
+//        auto name = (const char *)ASN1_STRING_get0_data(val->d.ia5);
+//        auto name_len = (size_t)ASN1_STRING_length(val->d.ia5);
+//
+//        switch (type) {
+//        case GEN_DNS: dsn_matched = check_host_name(name, name_len); break;
+//
+//        case GEN_IPADD:
+//          if (!memcmp(&addr6, name, addr_len) ||
+//              !memcmp(&addr, name, addr_len)) {
+//            ip_mached = true;
+//          }
+//          break;
+//        }
+//      }
+//    }
+//
+//    if (dsn_matched || ip_mached) { ret = true; }
+//  }
+//
+//  GENERAL_NAMES_free((STACK_OF(GENERAL_NAME) *)alt_names);
   return ret;
 }
 

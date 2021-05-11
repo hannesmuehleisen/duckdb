@@ -4,8 +4,11 @@ project(HTTPFsExtension)
 
 add_extension_definitions()
 
-include_directories(include ../.. ../../third_party/httplib
+include_directories(include ../.. ../../third_party/httplib ../../third_party/tlse
                     ../../third_party/picohash ../parquet/include)
 
+add_definitions(-DTLS_AMALGAMATION -D__STRICT_ANSI__)
+
+
 add_library(httpfs_extension STATIC s3fs.cpp httpfs.cpp crypto.cpp
-                                    httpfs-extension.cpp)
+                                    httpfs-extension.cpp ../../third_party/tlse/tlse.c)
