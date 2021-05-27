@@ -103,7 +103,7 @@ jobs:
         (cd build/coverage && cmake -E env CXXFLAGS="--coverage" cmake -DCMAKE_BUILD_TYPE=Debug ../.. && make)
         build/coverage/test/unittest
 
-     - name: Coveralls
+    - name: Coveralls
       uses: coverallsapp/github-action@master
       with:
         github-token: ${{ secrets.GH_TOKEN }}
