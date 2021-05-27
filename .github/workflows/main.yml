@@ -79,6 +79,31 @@ jobs:
 
     - name: Tidy Check
       run: make tidy-check
+  
+  coverage:
+    name: Coveralls
+    runs-on: ubuntu-20.04
+#    needs: linux-debug
+
+
+    env:
+      GEN: ninja
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Install
+      run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build && sudo pip3 install cpp-coveralls
+
+    - name: Coveralls Build
+      run: |
+        mkdir -p build/coverage
+        (cd build/coverage && cmake -E env CXXFLAGS="--coverage" cmake -DCMAKE_BUILD_TYPE=Debug ../.. && make)
+        build/coverage/test/unittest
+        coveralls -b build/coverage --exclude-pattern '.*CMake.*' --exclude tools --exclude benchmark --exclude examples --exclude third_party --exclude test --exclude src/common/enums --exclude src/parser/transform/helpers/nodetype_to_string.cpp --exclude build/coverage/third_party/libpg_query --exclude build/coverage/third_party/libpg_query/grammar --gcov-options '\-lp' > /dev/null
+
 
   win-release-64:
     name: Windows (64 Bit)
