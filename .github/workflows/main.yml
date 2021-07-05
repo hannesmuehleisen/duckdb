@@ -97,16 +97,27 @@ jobs:
     - name: Install
       run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build
 
+    - name: Coverage Reset
+      run: |
+        lcov --zerocounters --directory .
+        lcov --capture --initial --directory . --base-directory . --no-external --output-file lcov.info
+
     - name: Build
       run: |
         mkdir -p build/coverage
         (cd build/coverage && cmake -E env CXXFLAGS="--coverage" cmake -DCMAKE_BUILD_TYPE=Debug ../.. && make)
         build/coverage/test/unittest
 
+    - name: Generate Coverage
+      run: |
+        lcov --directory build/coverage --base-directory . --no-external --capture --output-file lcov.info
+        lcov --remove coverage.info '/usr*' '*/cl.hpp' -o lcov.info
+
     - name: Coveralls
       uses: coverallsapp/github-action@master
       with:
         github-token: ${{ secrets.GH_TOKEN }}
+        path-to-lcov: ./lcov.info
 
 
 #   win-release-64:
