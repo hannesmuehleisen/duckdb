@@ -1,0 +1,8 @@
+add_library(duckdb_test_malloc SHARED malloc.cpp)
+
+add_executable(duckdb_test_malloc_test test.cpp)
+
+target_link_libraries(duckdb_test_malloc_test duckdb_static)
+target_link_libraries(duckdb_test_malloc_test duckdb_test_malloc)
+
+link_threads(duckdb_test_malloc_test)
