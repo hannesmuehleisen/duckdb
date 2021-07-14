@@ -66,14 +66,15 @@ unique_ptr<ClientContextLock> ClientContext::LockContext() {
 }
 
 void ClientContext::Destroy() {
-	auto lock = LockContext();
+    ClientContextLock lock(context_lock);
+
 	if (transaction.HasActiveTransaction()) {
 		ActiveTransaction().active_query = MAXIMUM_QUERY_ID;
 		if (!transaction.IsAutoCommit()) {
 			transaction.Rollback();
 		}
 	}
-	CleanupInternal(*lock);
+	CleanupInternal(lock);
 }
 
 void ClientContext::Cleanup() {

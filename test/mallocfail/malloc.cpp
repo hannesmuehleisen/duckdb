@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <stdexcept>
 #include <atomic>
+#include <new>
+
 #include "mallocfail.h"
 
 std::atomic<size_t> success_count (1000000);
@@ -20,7 +22,7 @@ void *malloc(size_t s) {
     }
 
 	if (success_count == 0) {
-        throw std::runtime_error("eek");
+        throw std::bad_alloc();
     }
     success_count--;
     return real_malloc(s);
